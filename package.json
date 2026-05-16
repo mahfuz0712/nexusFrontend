@@ -1,0 +1,23 @@
+{
+  "name": "nexus-frontend",
+  "version": "1.0.0",
+  "description": "Frontend companion library for nexusjs — axios client with structured error handling",
+  "author": "Mohammad Mahfuz Rahman",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "peerDependencies": {
+    "axios": ">=1.16.1"
+  },
+  "devDependencies": {
+    "axios": "^1.16.1",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
+  }
+}
