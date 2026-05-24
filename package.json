@@ -1,6 +1,6 @@
 {
   "name": "nexus-frontend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Frontend companion library for nexusjs — axios client with structured error handling",
   "author": "Mohammad Mahfuz Rahman",
   "main": "./dist/index.js",
