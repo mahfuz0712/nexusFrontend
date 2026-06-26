@@ -1,6 +1,8 @@
-# Nexus-frontend
+# Nexus-Frontend
 
-The frontend companion library for [@mahfuz0712/nexus-backend](https://www.npmjs.com/package/@mahfuz0712/nexus-backend). Wraps axios with interceptors that automatically unwrap structured API responses and throw typed errors — so your `try/catch` blocks always know exactly what they're dealing with.
+The frontend companion library for [nexus-backend](https://www.npmjs.com/package/@mahfuz0712/nexus-backend). Returns a real axios instance with a typed `successResponse` / `errorResponse` contract baked in — no wrapper methods, no unwrapping, just axios with the right types and a typed error.
+
+> Designed specifically to pair with `nexus-backend`. It assumes every endpoint responds using `successResponse()` on success and `errorResponse()` (via `ApiError`) on failure.
 
 ---
 
@@ -11,8 +13,9 @@ The frontend companion library for [@mahfuz0712/nexus-backend](https://www.npmjs
 - [API Reference](#api-reference)
   - [createNexusClient](#createnexusclient)
   - [NexusError](#nexuserror)
-  - [isNexusError](#isnexuserror)
+  - [Error Helpers](#error-helpers)
 - [Response Shape](#response-shape)
+- [Auth Tokens & Interceptors](#auth-tokens--interceptors)
 - [TypeScript](#typescript)
 - [License](#license)
 
@@ -21,17 +24,15 @@ The frontend companion library for [@mahfuz0712/nexus-backend](https://www.npmjs
 ## Installation
 
 ```bash
-npm install nexus-frontend axios
+npm install axios nexus-frontend
 ```
 
 ---
 
 ## Quick Start
 
-**Create a client instance** (do this once and export it):
-
 ```ts
-// lib/api.ts
+// apis/api.ts
 import { createNexusClient } from "nexus-frontend";
 
 export const api = createNexusClient({
@@ -39,11 +40,11 @@ export const api = createNexusClient({
 });
 ```
 
-**Use it in your components or services:**
+`api` is a real axios instance — use it exactly like `axios.create()`. Nothing about the response is unwrapped; you get exactly what `nexus-backend`'s `successResponse()` sent, fully typed.
 
 ```ts
-import { api } from "./lib/api";
-import { isNexusError, SuccessResponse } from "nexus-frontend";
+import { api } from "./apis/api";
+import { isNexusError } from "nexus-frontend";
 
 interface User {
   id: number;
@@ -55,13 +56,14 @@ async function getUser(id: number) {
   try {
     const response = await api.get<User>(`/users/${id}`);
 
-    console.log(response.data);    // User object
-    console.log(response.message); // "User fetched successfully"
+    console.log(response.data.data);    // User — the "data" field from successResponse()
+    console.log(response.data.message); // "User fetched successfully"
+    console.log(response.status);       // 200 — plain HTTP status, normal axios
   } catch (err) {
     if (isNexusError(err)) {
-      console.error(err.message);    // "User not found"
-      console.error(err.statusCode); // 404
-      console.error(err.errors);     // field-level errors if any
+      console.error(err.message);    // message from ApiError / errorResponse()
+      console.error(err.statusCode); // statusCode from ApiError
+      console.error(err.errors);     // errors from ApiError, if any
     }
   }
 }
@@ -73,57 +75,44 @@ async function getUser(id: number) {
 
 ### `createNexusClient(config)`
 
-Creates and returns a configured axios instance with nexus interceptors attached.
-
 ```ts
-createNexusClient(config: NexusClientConfig): AxiosInstance
+createNexusClient(config: NexusClientConfig): NexusInstance
 ```
+
+Creates a real axios instance (`axios.create(config)`). `NexusInstance` is `AxiosInstance` with `get`/`post`/`put`/`patch`/`delete` retyped so the resolved value is `AxiosResponse<SuccessResponse<T>>` — matching what `nexus-backend`'s `successResponse()` sends. **No methods are added or changed at runtime** — `defaults`, `interceptors`, `getUri`, everything axios exposes works exactly as-is.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `config.baseURL` | `string` | Yes | Base URL for all requests |
-| `config.*` | `AxiosRequestConfig` | No | Any other valid axios config option |
-
-**Example with additional options:**
+| `config.*` | `AxiosRequestConfig` | No | Any other valid axios config option (`withCredentials`, `timeout`, `headers`, etc.) |
 
 ```ts
-import { createNexusClient } from "nexus-frontend";
-
 export const api = createNexusClient({
   baseURL: "https://api.yourapp.com",
+  withCredentials: true,
   timeout: 10000,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  headers: { "X-App-Version": "1.0.0" },
 });
 ```
 
-**Setting an auth token after login:**
+**Built-in interceptor behaviour:**
 
-```ts
-api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-```
-
-**Interceptors behaviour:**
-
-- On success — if the response body has `success: true`, the interceptor unwraps it and returns the `SuccessResponse` object directly. You access `.data` and `.message` without an extra `.data` layer.
-- On error — if the server responds with a nexusjs `ErrorResponse` body, the interceptor throws a `NexusError` with the structured message, status code, and field errors attached.
-- On network failure — timeouts, CORS errors, or no connection also throw a `NexusError` with `statusCode: 0`.
+- **On success** — nothing is touched. `response.data` is exactly the body `nexus-backend` sent via `successResponse()`: `{ success: true, data, message }`.
+- **On error** — if the server responded with an `errorResponse()` body (i.e. from a thrown `ApiError`), a `NexusError` is thrown with the same `message`, `statusCode`, and `errors`.
+- **On network failure** — timeouts, CORS errors, or no connection also throw a `NexusError` with `statusCode: 0`.
 
 ---
 
 ### `NexusError`
 
-A typed error class thrown by the client interceptor whenever a request fails. Extends the native `Error`.
+The only error type ever thrown by requests made through `createNexusClient`. Mirrors `nexus-backend`'s `ApiError` shape so error handling feels identical on both ends.
 
 ```ts
 class NexusError extends Error {
   statusCode: number; // HTTP status code, or 0 for network errors
-  errors?: any;       // Field-level or additional error details from the server
+  errors?: any;        // Field-level or additional error details from the server
 }
 ```
-
-**Example — handling field validation errors from the server:**
 
 ```ts
 import { isNexusError } from "nexus-frontend";
@@ -132,46 +121,36 @@ try {
   await api.post("/users", { name: "", email: "not-an-email" });
 } catch (err) {
   if (isNexusError(err)) {
-    if (err.statusCode === 422) {
-      // err.errors contains the field errors sent by ValidationError on the backend
-      console.log(err.errors);
-      // [
-      //   { field: "name", message: "Name is required" },
-      //   { field: "email", message: "Must be a valid email address" }
-      // ]
-    }
-
-    if (err.statusCode === 401) {
-      // redirect to login
-    }
-
-    if (err.statusCode === 0) {
-      // no internet / server unreachable
-    }
+    if (err.statusCode === 422) console.log(err.errors);
+    if (err.statusCode === 401) {/* redirect to login */}
+    if (err.statusCode === 0) {/* network/server unreachable */}
   }
 }
 ```
 
 ---
 
-### `isNexusError(error)`
+### Error Helpers
 
-A type guard that narrows an unknown `catch` value to `NexusError`. Always use this before accessing `.statusCode` or `.errors`.
+All helpers check against `NexusError` (the only error type these requests ever throw) — not raw `AxiosError`.
+
+| Function | Signature | Description |
+|---|---|---|
+| `isNexusError` | `(error: unknown) => error is NexusError` | Type guard — narrows `catch` value to `NexusError` |
+| `isNexusStatus` | `(error: unknown, statusCode: number) => boolean` | True if error is a `NexusError` with matching `statusCode` |
+| `notNexusError` | `(error: unknown) => boolean` | True if error is **not** a `NexusError` |
+| `notNexusStatus` | `(error: unknown, statusCode: number) => boolean` | True if not a `NexusError`, or `statusCode` doesn't match |
+| `nexusError` | `(error: unknown) => string \| undefined` | Extracts the message from a `NexusError`, if any |
+| `showError` | `(error: unknown, customMsg?: string) => void` | Shows an `alert()` with the error message or a fallback |
 
 ```ts
-isNexusError(error: unknown): error is NexusError
-```
+import { isNexusStatus } from "nexus-frontend";
 
-**Example:**
-
-```ts
+try {
+  await api.delete(`/posts/${id}`);
 } catch (err) {
-  if (isNexusError(err)) {
-    // err is NexusError here — fully typed
-    console.log(err.statusCode);
-  } else {
-    // unexpected non-nexus error
-    console.error(err);
+  if (isNexusStatus(err, 403)) {
+    alert("You don't have permission to delete this post.");
   }
 }
 ```
@@ -180,11 +159,9 @@ isNexusError(error: unknown): error is NexusError
 
 ## Response Shape
 
-The interceptor unwraps responses to match these shapes directly. These types are exported for use in your own code.
+These match `nexus-backend`'s `response.types.ts` exactly — `nexus-frontend` re-exports them so you don't need a separate install.
 
-#### Success
-
-When the server responds with `2xx` and a nexusjs success body, the resolved value of your `await` call is:
+#### Success — from `successResponse(data, message)`
 
 ```ts
 interface SuccessResponse<T = any> {
@@ -197,22 +174,50 @@ interface SuccessResponse<T = any> {
 ```ts
 const response = await api.get<Product>("/products/42");
 
-response.success  // true
-response.data     // Product
-response.message  // "Product fetched successfully"
+response.data.success  // true
+response.data.data     // Product
+response.data.message  // "Product fetched successfully"
+response.status        // 200 — HTTP status from axios, not from the body
 ```
 
-#### Error
-
-When the server responds with an error, a `NexusError` is thrown with values extracted from:
+#### Error — from `errorResponse(message, errors, stack)` / thrown `ApiError`
 
 ```ts
 interface ErrorResponse {
   success: false;
   message: string;
   errors?: any;
+  stack?: string;
 }
 ```
+
+On the frontend, this body is never seen directly — it's caught by the interceptor and re-thrown as a `NexusError`.
+
+---
+
+## Auth Tokens & Interceptors
+
+`api` is a real axios instance, so everything works the standard axios way.
+
+```ts
+// set token after login
+api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+
+// clear on logout
+delete api.defaults.headers.common["Authorization"];
+
+// add your own interceptors freely
+api.interceptors.request.use((config) => {
+  return config;
+});
+
+api.interceptors.response.use(
+  (res) => res,
+  (err) => Promise.reject(err)
+);
+```
+
+> **Note:** unlike many axios wrappers, the built-in interceptor here does **not** unwrap the body on success — `response.data` is always the raw `successResponse()` shape. This keeps client-side types in perfect sync with whatever `nexus-backend` actually sent, with no hidden transformation in between.
 
 ---
 
@@ -220,10 +225,8 @@ interface ErrorResponse {
 
 nexus-frontend is written in TypeScript and ships type declarations. No `@types` package needed.
 
-Pass your expected data shape as a generic to any axios method and the response will be fully typed:
-
 ```ts
-import type { SuccessResponse } from "nexus-frontend";
+import type { SuccessResponse, ErrorResponse } from "nexus-frontend";
 
 interface Post {
   id: number;
@@ -232,10 +235,9 @@ interface Post {
 }
 
 const response = await api.get<Post>("/posts/1");
-// response.data is typed as Post
+// response.data is typed as SuccessResponse<Post>
+// response.data.data is typed as Post
 ```
-
-You can also import `NexusClientConfig` to type a client factory wrapper:
 
 ```ts
 import { createNexusClient } from "nexus-frontend";
