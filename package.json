@@ -19,5 +19,11 @@
     "axios": "^1.16.1",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }
