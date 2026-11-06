@@ -2,7 +2,7 @@
 
 The frontend companion library for [nexus-backend](https://www.npmjs.com/package/@mahfuz0712/nexus-backend). Returns a real axios instance with a typed `successResponse` / `errorResponse` contract baked in — no wrapper methods, no unwrapping, just axios with the right types and a typed error.
 
-> Designed specifically to pair with `nexus-backend`. It assumes every endpoint responds using `successResponse()` on success and `errorResponse()` (via `ApiError`) on failure.
+> Designed specifically to pair with `nexus-backend`. It assumes every endpoint responds using `successResponse()` on success and `errorResponse()` (via `NexusError` and `errorMiddleware`) on failure.
 
 ---
 
@@ -61,9 +61,9 @@ async function getUser(id: number) {
     console.log(response.status);       // 200 — plain HTTP status, normal axios
   } catch (err) {
     if (isNexusError(err)) {
-      console.error(err.message);    // message from ApiError / errorResponse()
-      console.error(err.statusCode); // statusCode from ApiError
-      console.error(err.errors);     // errors from ApiError, if any
+      console.error(err.message);    // message from NexusError / errorResponse()
+      console.error(err.statusCode); // HTTP status from the backend response
+      console.error(err.errors);     // errors from NexusError, if any
     }
   }
 }
@@ -98,14 +98,14 @@ export const api = createNexusClient({
 **Built-in interceptor behaviour:**
 
 - **On success** — nothing is touched. `response.data` is exactly the body `nexus-backend` sent via `successResponse()`: `{ success: true, data, message }`.
-- **On error** — if the server responded with an `errorResponse()` body (i.e. from a thrown `ApiError`), a `NexusError` is thrown with the same `message`, `statusCode`, and `errors`.
+- **On error** — if the server responded with an `errorResponse()` body (i.e. from a thrown `NexusError` handled by `errorMiddleware`), a `NexusError` is thrown with the same `message`, HTTP `statusCode`, and `errors`.
 - **On network failure** — timeouts, CORS errors, or no connection also throw a `NexusError` with `statusCode: 0`.
 
 ---
 
 ### `NexusError`
 
-The only error type ever thrown by requests made through `createNexusClient`. Mirrors `nexus-backend`'s `ApiError` shape so error handling feels identical on both ends.
+The only error type ever thrown by requests made through `createNexusClient`. Mirrors `nexus-backend`'s `NexusError` shape so error handling feels identical on both ends.
 
 ```ts
 class NexusError extends Error {
@@ -180,7 +180,7 @@ response.data.message  // "Product fetched successfully"
 response.status        // 200 — HTTP status from axios, not from the body
 ```
 
-#### Error — from `errorResponse(message, errors, stack)` / thrown `ApiError`
+#### Error — from `errorResponse(message, errors, stack)` / thrown `NexusError`
 
 ```ts
 interface ErrorResponse {
@@ -191,7 +191,7 @@ interface ErrorResponse {
 }
 ```
 
-On the frontend, this body is never seen directly — it's caught by the interceptor and re-thrown as a `NexusError`.
+On the frontend, this body is never seen directly — it is caught by the interceptor and re-thrown as a frontend `NexusError`. The backend must send a non-2xx HTTP status (as `errorMiddleware` does); a `200` response containing `{ success: false }` is still treated as a successful Axios response.
 
 ---
 

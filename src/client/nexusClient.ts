@@ -43,21 +43,30 @@ export interface NexusInstance
   ): Promise<AxiosResponse<SuccessResponse<T>>>;
 }
 
+const isErrorResponse = (body: unknown): body is ErrorResponse => {
+  if (typeof body !== "object" || body === null) {
+    return false;
+  }
+
+  const candidate = body as Partial<ErrorResponse>;
+  return candidate.success === false && typeof candidate.message === "string";
+};
+
 export function createNexusClient(config: NexusClientConfig): NexusInstance {
   const client = axios.create(config);
 
   // success কিছুই touch করবে না — খাঁটি axios behavior।
-  // শুধু error কে nexus-backend এর ApiError শেইপ অনুযায়ী NexusError বানিয়ে throw করা হবে।
+  // শুধু error কে nexus-backend এর NexusError শেইপ অনুযায়ী NexusError বানিয়ে throw করা হবে।
   client.interceptors.response.use(
     (response) => response,
     (error) => {
       if (axios.isAxiosError(error) && error.response) {
-        const body = error.response.data as ErrorResponse;
+        const body: unknown = error.response.data;
 
         throw new NexusError(
-          body?.message ?? "An unexpected error occurred",
+          isErrorResponse(body) ? body.message : "An unexpected error occurred",
           error.response.status,
-          body?.errors
+          isErrorResponse(body) ? body.errors : undefined
         );
       }
 
